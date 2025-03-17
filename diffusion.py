@@ -227,12 +227,10 @@ class LatentDiffusion:
         ], lr=Config.lr)
         
     def train_step(self, images):
-        # Generate labels and encode text
         texts = [self.label_gen.generate_label(img) for img in images]
         text_inputs = self.clip_processor(text=texts, return_tensors="pt", padding=True).to(Config.device)
         text_emb = self.clip.get_text_features(**text_inputs)
         
-        # Encode images to latent space
         with torch.no_grad():
             mu, logvar = self.vae.encode(images)
             latents = self.vae.reparameterize(mu, logvar)
@@ -242,13 +240,11 @@ class LatentDiffusion:
         noisy_latents, noise = self.diffusion.noise_latents(latents, t)
         predicted_noise = self.unet(noisy_latents, t, text_emb)
         
-        # Loss calculation
         vae_loss = F.mse_loss(self.vae.decode(latents), images)
         kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp()) / images.size(0)
         diffusion_loss = F.mse_loss(predicted_noise, noise)
         total_loss = vae_loss + 0.001*kl_loss + diffusion_loss
         
-        # Optimize
         self.optimizer.zero_grad()
         total_loss.backward()
         torch.nn.utils.clip_grad_norm_(self.unet.parameters(), 1.0)
@@ -274,14 +270,11 @@ class LatentDiffusion:
         self.vae.eval()
         self.unet.eval()
         
-        # Encode text
         text_inputs = self.clip_processor(text=[prompt], return_tensors="pt", padding=True).to(Config.device)
         text_emb = self.clip.get_text_features(**text_inputs)
         
-        # Initialize latent
         z = torch.randn(1, Config.latent_dim, 16, 16).to(Config.device)
         
-        # Diffusion sampling
         for t in tqdm(reversed(range(0, Config.timesteps)), desc="Generating"):
             ts = torch.full((1,), t, device=Config.device).long()
             pred_noise = self.unet(z, ts, text_emb)
@@ -297,18 +290,15 @@ class LatentDiffusion:
             z = (z - (beta / torch.sqrt(1 - alpha_bar)) * pred_noise) / torch.sqrt(alpha)
             z += torch.sqrt(beta) * noise
         
-        # Decode latent
         with torch.no_grad():
             image = self.vae.decode(z).clamp(-1, 1)
         return image[0].permute(1, 2, 0).cpu().detach().numpy()
 
 
 if __name__ == "__main__":
-    # Initialize system
     ldm = LatentDiffusion()
     ldm.load_checkpoint()
     
-    # Dataset preparation
     transform = transforms.Compose([
         transforms.Resize(Config.image_size),
         transforms.CenterCrop(Config.image_size),
@@ -318,7 +308,6 @@ if __name__ == "__main__":
     dataset = ImageNet(root='./data', split='train', transform=transform)
     loader = DataLoader(dataset, batch_size=Config.batch_size, shuffle=True, num_workers=4)
     
-    # Training loop
     for epoch in range(Config.num_epochs):
         total_loss = 0
         pbar = tqdm(loader, desc=f"Epoch {epoch+1}/{Config.num_epochs}")
@@ -330,7 +319,6 @@ if __name__ == "__main__":
         print(f"Epoch {epoch+1} - Average Loss: {total_loss/len(loader):.4f}")
         ldm.save_checkpoint()
     
-    # Interactive generation
     while True:
         prompt = input("Enter text prompt (or 'quit' to exit): ")
         if prompt.lower() == 'quit':
